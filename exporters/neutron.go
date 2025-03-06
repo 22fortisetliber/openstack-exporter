@@ -1,15 +1,18 @@
 package exporters
 
 import (
+	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"go4.org/netipx"
 
 	"net/netip"
 
 	"github.com/go-kit/log"
+	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/agents"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/external"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
@@ -22,6 +25,7 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
+	"github.com/gophercloud/gophercloud/pagination"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -129,14 +133,14 @@ func ListFloatingIps(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metri
 
 // ListAgentStates : list agent state per node
 func ListAgentStates(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
-	var allAgents []agents.Agent
+	var allAgents []Agent
 
 	allPagesAgents, err := agents.List(exporter.Client, agents.ListOpts{}).AllPages()
 	if err != nil {
 		return err
 	}
 
-	allAgents, err = agents.ExtractAgents(allPagesAgents)
+	allAgents, err = extractAgents(allPagesAgents)
 	if err != nil {
 		return err
 	}
@@ -355,6 +359,65 @@ func ListNetworkIPAvailabilities(exporter *BaseOpenStackExporter, ch chan<- prom
 	return nil
 }
 
+type JSONRFC3339ZNoTNoZOVN time.Time
+
+// UnmarshalJSON helps to deal with both timestamp formats.
+// Checkout: https://github.com/openstack/neutron/commit/1d611f4a7e1d6d1e9103845390e4bea0bd4c6a19
+func (jt *JSONRFC3339ZNoTNoZOVN) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		return nil
+	}
+
+	t, err := time.Parse(gophercloud.RFC3339ZNoTNoZ, s)
+	if err != nil {
+		// if fail try to parse with different format
+		t, err = time.Parse("2006-01-02 15:04:05.999999-07:00", s)
+		if err != nil {
+			return err
+		}
+	}
+	*jt = JSONRFC3339ZNoTNoZOVN(t)
+	return nil
+}
+
+type Agent agents.Agent
+
+// UnmarshalJSON helps to convert the timestamps into the time.Time type.
+func (r *Agent) UnmarshalJSON(b []byte) error {
+	type tmp Agent
+	var s struct {
+		tmp
+		CreatedAt          gophercloud.JSONRFC3339ZNoTNoZ `json:"created_at"`
+		StartedAt          gophercloud.JSONRFC3339ZNoTNoZ `json:"started_at"`
+		HeartbeatTimestamp JSONRFC3339ZNoTNoZOVN          `json:"heartbeat_timestamp"`
+	}
+	err := json.Unmarshal(b, &s)
+	if err != nil {
+		return err
+	}
+	*r = Agent(s.tmp)
+
+	r.CreatedAt = time.Time(s.CreatedAt)
+	r.StartedAt = time.Time(s.StartedAt)
+	r.HeartbeatTimestamp = time.Time(s.HeartbeatTimestamp)
+
+	return nil
+}
+
+// extractAgents interprets the results of a single page from a List()
+// API call, producing a slice of Agents structs.
+func extractAgents(r pagination.Page) ([]Agent, error) {
+	var s struct {
+		Agents []Agent `json:"agents"`
+	}
+	err := (r.(agents.AgentPage)).ExtractInto(&s)
+	return s.Agents, err
+}
+
 // ListRouters : count total number of instantiated Routers and those that are not in ACTIVE state
 func ListRouters(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
 	var allRouters []routers.Router
@@ -376,7 +439,7 @@ func ListRouters(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) e
 	if err != nil {
 		return err
 	}
-	ovnAgents, err := agents.ExtractAgents(ovnAgentsPages)
+	ovnAgents, err := extractAgents(ovnAgentsPages)
 	if err != nil {
 		return err
 	}

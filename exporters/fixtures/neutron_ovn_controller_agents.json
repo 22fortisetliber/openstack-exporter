@@ -1,3 +1,36 @@
 {
-  "agents": []
+  "agents": [
+    {
+      "binary": "ovn-controller-01",
+      "host": "host01",
+      "heartbeat_timestamp": "2025-02-25 06:37:38.969000+00:00",
+      "availability_zone": "",
+      "topic": "n/a",
+      "description": "",
+      "configurations": {
+        "chassis_name": "host01",
+        "bridge-mappings": "physnet1:br-ex"
+      },
+      "agent_type": "OVN Controller agent",
+      "id": "c5a1e7b9-5f4d-558b-8a8b-449906f99356",
+      "alive": true,
+      "admin_state_up": true
+    },
+    {
+      "binary": "ovn-controller-02",
+      "host": "host02",
+      "heartbeat_timestamp": "2025-02-25 06:37:38.969000+00:00",
+      "availability_zone": "",
+      "topic": "n/a",
+      "description": "",
+      "configurations": {
+        "chassis_name": "host02",
+        "bridge-mappings": "physnet1:br-ex"
+      },
+      "agent_type": "OVN Controller agent",
+      "id": "host02",
+      "alive": true,
+      "admin_state_up": true
+    }
+  ]
 }
