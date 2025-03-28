@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/go-kit/log"
@@ -15,6 +16,8 @@ import (
 	"github.com/hashicorp/go-uuid"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+var UNSUPPORTED_V2_SERVICES = []string{"clustering"}
 
 type Metric struct {
 	Name              string
@@ -194,6 +197,18 @@ func (exporter *BaseOpenStackExporter) AddMetric(name string, fn ListFunc, label
 	}
 }
 
+func (exporter *BaseOpenStackExporter) UpdateMetric(name string, labels []string, constLabels prometheus.Labels) {
+	if constLabels == nil {
+		constLabels = prometheus.Labels{}
+	}
+	if metric, ok := exporter.Metrics[name]; ok {
+		level.Info(exporter.logger).Log("msg", "Updating metric for exporter", "metric", name, "exporter", exporter.Name)
+		metric.Metric = prometheus.NewDesc(
+			prometheus.BuildFQName(exporter.GetName(), "", name),
+			name, labels, constLabels)
+	}
+}
+
 func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointType string, collectTime bool, disableSlowMetrics bool, disableDeprecatedMetrics bool, disableCinderAgentUUID bool, domainID string, tenantID string, uuidGenFunc func() (string, error), logger log.Logger) (OpenStackExporter, error) {
 	var exporter OpenStackExporter
 	var err error
@@ -226,9 +241,14 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 		return nil, err
 	}
 
-	clientV2, err := NewServiceClientV2(name, &optsv2, transport, endpointType)
-	if err != nil {
-		return nil, err
+	var clientV2 *gophercloudv2.ServiceClient
+	if !slices.Contains(UNSUPPORTED_V2_SERVICES, name) {
+		clientV2, err = NewServiceClientV2(name, &optsv2, transport, endpointType)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		clientV2 = nil
 	}
 
 	if uuidGenFunc == nil {
@@ -280,6 +300,8 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 		exporter, err = NewPlacementExporter(&exporterConfig, logger)
 	case "sharev2":
 		exporter, err = NewManilaExporter(&exporterConfig, logger)
+	case "clustering":
+		exporter, err = NewClusteringExporter(&exporterConfig, logger)
 	default:
 		return nil, fmt.Errorf("couldn't find a handler for %s exporter", name)
 	}
